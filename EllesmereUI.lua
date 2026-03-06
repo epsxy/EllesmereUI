@@ -1,4 +1,4 @@
-﻿-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --  EllesmereUI.lua  -  Custom Options Panel for EllesmereUI
 --  Design-first scaffold: background, sidebar, header, content area, controls
 --  Meant to be shared across the entire EllesmereUI addon suite.
@@ -1606,7 +1606,7 @@ local function CreateConfirmPopup()
     -- Button dimensions
     local BTN_W, BTN_H = 135, 29
     local BTN_GAP = 16
-    local BTN_Y = 28
+    local BTN_Y = 13
     local FADE_DUR = 0.1
 
     -- Helper: create a styled popup button
@@ -5190,7 +5190,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "2.8"
+EllesmereUI.VERSION = "2.9"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -5263,10 +5263,11 @@ if not _G._EUI_ConflictChecked then
         if not IsLoaded then return end
         local euiAddons = _G._EUI_AddonVersions or {}
 
-        -- conflict list: { addon, label, targets }
+        -- conflict list: { addon, label, targets, message }
         -- targets = "all" or a table of Ellesmere folder names
+        -- message = optional custom popup message override
         local conflicts = {
-            { addon = "ElvUI",                    label = "ElvUI",                      targets = "all" },
+            { addon = "ElvUI",                    label = "ElvUI",                      targets = "all",                              message = "Many of ElvUI's modules are incompatible with EllesmereUI. Make sure to disable any conflicting modules." },
             { addon = "Bartender4",               label = "Bartender4",                 targets = { "EllesmereUIActionBars" } },
             { addon = "Dominos",                  label = "Dominos",                    targets = { "EllesmereUIActionBars" } },
             { addon = "UnhaltedUnitFrames",       label = "Unhalted Unit Frames",       targets = { "EllesmereUIUnitFrames" } },
@@ -5278,7 +5279,7 @@ if not _G._EUI_ConflictChecked then
             { addon = "UltimateMouseCursor",      label = "Ultimate Mouse Cursor",      targets = { "EllesmereUICursor" } },
             { addon = "BetterCooldownManager",    label = "Better Cooldown Manager",    targets = { "EllesmereUICooldownManager" } },
             { addon = "ArcUI",                    label = "ArcUI",                      targets = { "EllesmereUICooldownManager" } },
-
+            { addon = "Ayije_CDM",                label = "Ayije CDM",                  targets = { "EllesmereUICooldownManager" } },
         }
 
         local exempt = { EllesmereUIPartyMode = true }
@@ -5288,14 +5289,19 @@ if not _G._EUI_ConflictChecked then
                 -- Find which of our addons this conflicts with
                 local affected = {}
                 if entry.targets == "all" then
-                    for name in pairs(euiAddons) do
-                        if not exempt[name] then
+                    local allTargets = {
+                        "EllesmereUIActionBars", "EllesmereUIUnitFrames", "EllesmereUINameplates",
+                        "EllesmereUIResourceBars", "EllesmereUIAuraBuffReminders", "EllesmereUICooldownManager",
+                        "EllesmereUICursor", "EllesmereUIBasics", "EllesmereUIRaidFrames",
+                    }
+                    for _, name in ipairs(allTargets) do
+                        if not exempt[name] and IsLoaded(name) then
                             affected[#affected + 1] = name
                         end
                     end
                 else
                     for _, t in ipairs(entry.targets) do
-                        if euiAddons[t] then
+                        if IsLoaded(t) then
                             affected[#affected + 1] = t
                         end
                     end
@@ -5306,9 +5312,11 @@ if not _G._EUI_ConflictChecked then
                     for _, a in ipairs(affected) do
                         names[#names + 1] = a:gsub("^EllesmereUI", "")
                     end
-                    local msg = entry.label .. " is not compatible with EllesmereUI " .. table.concat(names, ", ")
+                    local msg = entry.message or (
+                        entry.label .. " is not compatible with EllesmereUI " .. table.concat(names, ", ")
                         .. ". Running both at the same time may cause errors or unexpected behavior."
                         .. "\n\nPlease disable one of them."
+                    )
                     if EllesmereUI.ShowConfirmPopup then
                         EllesmereUI:ShowConfirmPopup({
                             title       = "Incompatible Addon Detected",

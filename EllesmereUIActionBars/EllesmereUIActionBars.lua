@@ -1,4 +1,4 @@
-﻿-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --  EllesmereUIActionBars.lua  Custom Action Bars (full rewrite)
 --
 --  Creates its own secure action bar frames and buttons instead of hooking
@@ -305,6 +305,10 @@ end
 
 local fadeAnims = {}
 
+-- Drag visibility state (file-scope so ApplyAll can reset strata on spec change)
+local _dragVisible = false
+local _dragStrataCache = {}
+
 local function FadeTo(frame, toAlpha, duration)
     duration = duration or 0.1
     if abs(frame:GetAlpha() - toAlpha) < 0.01 then
@@ -453,20 +457,19 @@ local function HideBlizzardBars()
     end
     -- Hide the action bar page number
     if MainMenuBarPageNumber then MainMenuBarPageNumber:Hide() end
-    -- Hide ActionBarParent (saves CPU) but show it during full vehicle UI
-    -- so Blizzard's vehicle bar can appear.  Override bar (quest mini-vehicles)
-    -- is handled by our own bar 1 paging â€” no need to show ActionBarParent.
-    -- RegisterAttributeDriver is combat-safe â€” handled entirely in restricted C code.
+    -- Hide ActionBarParent normally; show it during full vehicle UI so
+    -- Blizzard's vehicle bar can render.  Combat-safe via attribute driver.
     if ActionBarParent then
         RegisterAttributeDriver(ActionBarParent, "state-visibility",
             "[vehicleui] show; hide")
     end
-    -- Hide Blizzard's OverrideActionBar â€” we show override actions on our
-    -- own bar 1 via paging.  Reparent to hidden frame so it can't appear.
-    -- Don't unregister events or call Hide() directly to avoid taint from
-    -- Blizzard's ValidateActionBarTransition secure code.
+    -- Let Blizzard's OverrideActionBar show itself for override bars and
+    -- skinned vehicles (quest mini-vehicles, encounter abilities, etc.).
+    -- Blizzard's ActionBarController handles populating it correctly.
+    -- Combat-safe via attribute driver -- no direct Hide() calls.
     if OverrideActionBar then
-        OverrideActionBar:SetParent(hiddenParent)
+        RegisterAttributeDriver(OverrideActionBar, "state-visibility",
+            "[vehicleui] show; hide")
     end
     -- Wipe Blizzard's actionButtons tables so they don't interfere
     for _, name in ipairs({"MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarRight", "MultiBarLeft", "MultiBar5", "MultiBar6", "MultiBar7"}) do
@@ -583,21 +586,25 @@ local function GetClassPagingConditions()
     local _, class = UnitClass("player")
     local conditions = ""
 
+    -- Override bar (soft vehicle / quest abilities) and possess bar: remap bar 1
+    -- to show those action slots so our buttons stay visible and keybinds work.
+    if GetOverrideBarIndex then
+        conditions = conditions .. "[overridebar] " .. GetOverrideBarIndex() .. "; "
+    end
+    if GetVehicleBarIndex then
+        conditions = conditions .. "[vehicleui][possessbar] " .. GetVehicleBarIndex() .. "; "
+    end
+
     -- Class-specific paging
     if class == "DRUID" then
-        conditions = "[bonusbar:1,stealth] 7; [bonusbar:1] 7; [bonusbar:3] 9; [bonusbar:4] 10; "
+        conditions = conditions .. "[bonusbar:1,stealth] 7; [bonusbar:1] 7; [bonusbar:3] 9; [bonusbar:4] 10; "
     elseif class == "ROGUE" then
-        conditions = "[bonusbar:1] 7; "
+        conditions = conditions .. "[bonusbar:1] 7; "
     end
 
     -- Dragonriding (all classes)
     conditions = conditions .. "[bonusbar:5] 11; "
 
-    -- Vehicle / Override / Possess â€” use actual bar indices from the API
-    local overrideIdx = GetOverrideBarIndex and GetOverrideBarIndex() or 14
-    local vehicleIdx  = GetVehicleBarIndex and GetVehicleBarIndex() or 12
-    local shapeshiftIdx = GetTempShapeshiftBarIndex and GetTempShapeshiftBarIndex() or 13
-    conditions = conditions .. format("[overridebar] %d; [vehicleui][possessbar] %d; [shapeshift] %d; ", overrideIdx, vehicleIdx, shapeshiftIdx)
 
     -- Default: page 1
     conditions = conditions .. "1"
@@ -627,15 +634,13 @@ local function CreateBarFrame(info)
         local pagingConditions = GetClassPagingConditions()
 
         frame:SetAttribute("barLength", NUM_ACTIONBAR_BUTTONS)
-        frame:SetAttribute("overrideBarLength", NUM_ACTIONBAR_BUTTONS)
 
-        -- Secure snippet: when page changes, compute offset and broadcast to children.
-        -- Vehicle/override/possess pages are resolved dynamically at state-change time
-        -- so the correct bar index is used regardless of when the addon loaded.
+        -- Secure snippet: when page state changes, compute action offset
+        -- and broadcast to all child buttons via ChildUpdate.
         frame:SetAttribute("_onstate-page", [[
             local page = tonumber(newstate) or 1
-
-            if newstate == "possess" or page == 11 then
+            -- Possess/bonus bar fallback: resolve the real page index
+            if page == 11 then
                 if HasVehicleActionBar() then
                     page = GetVehicleBarIndex()
                 elseif HasOverrideActionBar() then
@@ -644,31 +649,12 @@ local function CreateBarFrame(info)
                     page = GetTempShapeshiftBarIndex()
                 elseif HasBonusActionBar() then
                     page = GetBonusBarIndex()
-                else
-                    page = 12
                 end
             end
-
             local barLen = self:GetAttribute("barLength")
             local offset = (page - 1) * barLen
-
-            -- Pages 1-11 are normal action bar pages; skip the unusable
-            -- bar-12 slot range (slots 133-144).  Override/vehicle/possess
-            -- pages (12+) map directly to their action slots.
-            if page <= 11 and offset >= 132 then
-                offset = offset + 12
-            end
-
             self:SetAttribute("actionOffset", offset)
             control:ChildUpdate("offset", offset)
-        ]])
-
-        -- Override bar support (vehicle/override UI)
-        frame:SetAttribute("_onstate-overridebar", [[
-            self:RunAttribute("_onstate-page", self:GetAttribute("state-page") or "1")
-        ]])
-        frame:SetAttribute("_onstate-overridepage", [[
-            self:RunAttribute("_onstate-page", self:GetAttribute("state-page") or "1")
         ]])
 
         RegisterStateDriver(frame, "page", pagingConditions)
@@ -2062,7 +2048,7 @@ function EAB:ApplyCombatVisibility()
                 -- Hide during full vehicle UI so Blizzard's vehicle bar shows.
                 -- Override bar (quest mini-vehicles) pages bar 1 to show
                 -- override actions â€” no need to hide.
-                local vehiclePrefix = "[vehicleui][possessbar] hide; "
+                local vehiclePrefix = "[vehicleui] hide; "
                 if s.combatShowEnabled then
                     RegisterAttributeDriver(frame, "state-visibility", vehiclePrefix .. "[combat] show; hide")
                 elseif s.combatHideEnabled then
@@ -2096,7 +2082,7 @@ function EAB:ApplyAlwaysHidden()
                 -- vehicle hide work again.  This mirrors ApplyCombatVisibility
                 -- logic so the two functions stay in sync.
                 if not info.visibilityOnly and not InCombatLockdown() then
-                    local vehiclePrefix = "[vehicleui][possessbar] hide; "
+                    local vehiclePrefix = "[vehicleui] hide; "
                     if s.combatShowEnabled then
                         RegisterAttributeDriver(frame, "state-visibility", vehiclePrefix .. "[combat] show; hide")
                     elseif s.combatHideEnabled then
@@ -2115,6 +2101,39 @@ function EAB:ApplyAlwaysHidden()
                 end
             end
         end
+    end
+end
+
+function EAB:ApplySmartNumIcons(barKey)
+    -- Only applies to action bars 1-8 (not stance/pet/extra bars)
+    local info = BAR_LOOKUP[barKey]
+    if not info or not info.barID or info.barID < 1 or info.barID > 8 then return end
+    local s = self.db.profile.bars[barKey]
+    if not s then return end
+    -- Only auto-trim when alwaysShowButtons is off
+    local showEmpty = s.alwaysShowButtons
+    if showEmpty == nil then showEmpty = true end
+    if showEmpty then return end
+
+    -- Find the last slot index (1-12) that has an action assigned
+    local slotBase = (info.barID - 1) * 12
+    local lastFilled = 0
+    for i = 1, 12 do
+        if HasAction(slotBase + i) then
+            lastFilled = i
+        end
+    end
+
+    -- Set numIcons to the last filled slot (minimum 1, or 0 if bar is empty)
+    -- Don't expand beyond what the user already has set
+    local current = s.numIcons or info.count
+    local trimmed = lastFilled > 0 and lastFilled or 1
+    if trimmed < current then
+        s.numIcons = trimmed
+        -- Re-apply layout so the bar resizes immediately
+        LayoutBar(barKey)
+        self:ApplyAlwaysShowButtons(barKey)
+        self:ApplyBackgroundForBar(barKey)
     end
 end
 
@@ -2980,23 +2999,7 @@ end
 local function ClearKeybindsForVehicle()
     if _vehicleBindsCleared then return end
     _vehicleBindsCleared = true
-    if InCombatLockdown() then
-        -- Defer the actual ClearOverrideBindings until combat drops
-        local f = CreateFrame("Frame")
-        f:RegisterEvent("PLAYER_REGEN_ENABLED")
-        f:SetScript("OnEvent", function(self)
-            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-            -- Only clear if still in vehicle state
-            if not _vehicleBindsCleared then return end
-            for _, info in ipairs(BAR_CONFIG) do
-                local frame = barFrames[info.key]
-                if frame then
-                    ClearOverrideBindings(frame)
-                end
-            end
-        end)
-        return
-    end
+    -- ClearOverrideBindings is not a protected function and can be called in combat
     for _, info in ipairs(BAR_CONFIG) do
         local frame = barFrames[info.key]
         if frame then
@@ -3033,7 +3036,7 @@ _vehicleStateFrame:SetAttribute("_onstate-vehicleui", [[
 ]])
 _vehicleStateFrame.OnVehicleEnter = ClearKeybindsForVehicle
 _vehicleStateFrame.OnVehicleExit  = RestoreKeybindsAfterVehicle
-RegisterStateDriver(_vehicleStateFrame, "vehicleui", "[vehicleui][possessbar] invehicle; novehicle")
+RegisterStateDriver(_vehicleStateFrame, "vehicleui", "[vehicleui] invehicle; novehicle")
 
 -------------------------------------------------------------------------------
 --  Vehicle Exit Button
@@ -3160,6 +3163,15 @@ end
 -------------------------------------------------------------------------------
 local function ApplyAll()
     if InCombatLockdown() then return end
+
+    -- Restore any strata raised during a drag that wasn't cleaned up
+    if _dragVisible then
+        _dragVisible = false
+        for frame, orig in pairs(_dragStrataCache) do
+            frame:SetFrameStrata(orig)
+        end
+        wipe(_dragStrataCache)
+    end
 
     for _, info in ipairs(BAR_CONFIG) do
         local key = info.key
@@ -3536,6 +3548,17 @@ function EAB:FinishSetup()
         UpdateKeybinds()
         self:HookProcGlow()
         self:ScanExistingProcs()
+        -- Initial snapshot: trim numIcons for any bars with alwaysShowButtons off
+        for _, info in ipairs(BAR_CONFIG) do
+            if info.barID and info.barID >= 1 and info.barID <= 8 then
+                local s = self.db.profile.bars[info.key]
+                local showEmpty = s and s.alwaysShowButtons
+                if showEmpty == nil then showEmpty = true end
+                if not showEmpty then
+                    self:ApplySmartNumIcons(info.key)
+                end
+            end
+        end
     end)
 
     -- Attach hover hooks for mouseover
@@ -3578,16 +3601,89 @@ function EAB:FinishSetup()
 
     self:RegisterEvent("ACTIONBAR_SHOWGRID", OnGridChange)
 
-    -- Detect bar-to-bar drags (CURSOR_CHANGED) and clear grid state on drop
+    -- Detect bar-to-bar drags (CURSOR_CHANGED) and clear grid state on drop.
+    -- Also show mouseover-faded bars while dragging so the player can drop
+    -- spells/items onto them.  Purely visual -- no secure frame access.
+    local DRAG_TYPES = {
+        spell = true, item = true, macro = true,
+        petaction = true, mount = true, companion = true,
+    }
+    _dragVisible = false
+    _dragStrataCache = {}  -- [frame] = originalStrata
+    local function ResetDragState()
+        -- Force-restore all strata and clear drag visibility without the
+        -- guard check, so stale state from spec changes etc. is always cleaned.
+        _dragVisible = false
+        for frame, orig in pairs(_dragStrataCache) do
+            if not InCombatLockdown() then
+                frame:SetFrameStrata(orig)
+            end
+        end
+        wipe(_dragStrataCache)
+    end
+    local function SetDragVisible(show)
+        if _dragVisible == show then return end
+        _dragVisible = show
+        for _, info in ipairs(ALL_BARS) do
+            local key = info.key
+            local s = self.db.profile.bars[key]
+            if not s then break end
+            local frame = barFrames[key]
+                or (info.isDataBar and dataBarFrames[key])
+                or (info.isBlizzardMovable and blizzMovableHolders[key])
+                or extraBarHolders[key]
+                or (info.visibilityOnly and _G[info.frameName])
+            if frame then
+                local state = hoverStates[key]
+                if show then
+                    -- Raise strata so bars render above the spellbook.
+                    -- SetFrameStrata is protected on secure frames in combat,
+                    -- so only do this out of combat.
+                    if not InCombatLockdown() then
+                        if not _dragStrataCache[frame] then
+                            _dragStrataCache[frame] = frame:GetFrameStrata()
+                        end
+                        frame:SetFrameStrata("HIGH")
+                    end
+                    -- Show mouseover-faded bars
+                    if s.mouseoverEnabled then
+                        StopFade(frame)
+                        frame:SetAlpha(s.mouseoverAlpha or 1)
+                        if state then state.fadeDir = "in" end
+                    end
+                else
+                    -- Restore original strata (only if we changed it)
+                    if not InCombatLockdown() then
+                        local orig = _dragStrataCache[frame]
+                        if orig then
+                            frame:SetFrameStrata(orig)
+                            _dragStrataCache[frame] = nil
+                        end
+                    end
+                    -- Fade back out if mouseover-enabled and not hovered
+                    if s.mouseoverEnabled then
+                        if not (state and state.isHovered) then
+                            StopFade(frame)
+                            FadeTo(frame, 0, s.mouseoverSpeed or 0.15)
+                            if state then state.fadeDir = "out" end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     self:RegisterEvent("CURSOR_CHANGED", function()
         local cursorType = GetCursorInfo()
         if cursorType then
-            if not gridShown and (cursorType == "spell" or cursorType == "item"
-               or cursorType == "macro" or cursorType == "petaction"
-               or cursorType == "mount" or cursorType == "companion") then
-                OnGridChange()
+            if DRAG_TYPES[cursorType] then
+                SetDragVisible(true)
+                if not gridShown then
+                    OnGridChange()
+                end
             end
         else
+            SetDragVisible(false)
             if gridShown then
                 gridShown = false
                 C_Timer_After(0, function()
@@ -3602,6 +3698,8 @@ function EAB:FinishSetup()
     self:RegisterEvent("PLAYER_REGEN_ENABLED", function()
         -- Re-apply anything that was deferred during combat
         ApplyAll()
+        -- Restore any strata changes that couldn't be done in combat
+        ResetDragState()
     end)
 
     self:RegisterEvent("PLAYER_ENTERING_WORLD", function()
@@ -3610,13 +3708,14 @@ function EAB:FinishSetup()
         -- vehicleui/overridebar during zone transitions, which clears our
         -- override bindings.  If the restore races with InCombatLockdown()
         -- the bindings stay cleared forever.  This catches that.
+        ResetDragState()
         C_Timer_After(0.2, function()
             if InCombatLockdown() then return end
             -- Reset stale flags â€” if we're not actually in a vehicle/housing
             -- the flags should be false
             local inVehicle = (UnitInVehicle and UnitInVehicle("player"))
                               or (HasVehicleActionBar and HasVehicleActionBar())
-                              or (HasOverrideActionBar and HasOverrideActionBar())
+
             if not inVehicle and _vehicleBindsCleared then
                 _vehicleBindsCleared = false
             end
@@ -3626,6 +3725,20 @@ function EAB:FinishSetup()
             end
             UpdateKeybinds()
         end)
+    end)
+
+    -- Vehicle enter/exit: clear our override bindings so Blizzard's vehicle bar
+    -- receives keybinds. Restore them when the player exits the vehicle.
+    -- Use a raw frame for unit events since Ace3 RegisterEvent doesn't support them.
+    local _vehicleEventFrame = CreateFrame("Frame")
+    _vehicleEventFrame:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
+    _vehicleEventFrame:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
+    _vehicleEventFrame:SetScript("OnEvent", function(self, event)
+        if event == "UNIT_ENTERED_VEHICLE" then
+            ClearKeybindsForVehicle()
+        elseif event == "UNIT_EXITED_VEHICLE" then
+            RestoreKeybindsAfterVehicle()
+        end
     end)
 
     self:RegisterEvent("UPDATE_BONUS_ACTIONBAR", function()

@@ -1,4 +1,4 @@
--------------------------------------------------------------------------------
+﻿-------------------------------------------------------------------------------
 --  EllesmereUIResourceBars.lua
 --  Custom class resource, health, and mana bar display
 --  Features: Health bar, primary resource bar (mana/rage/energy/etc),
@@ -517,11 +517,16 @@ local function CreateStatusBar(parent, name, w, h, borderSize, borderR, borderG,
         end
     end
 
-    -- Text overlay
-    local text = bar:CreateFontString(nil, "OVERLAY")
-    text:SetFont(GetRBFont(), 11, "OUTLINE")
+    -- Text overlay on a child frame above the border (above frame level + 1 border)
+    local textFrame = CreateFrame("Frame", nil, bar)
+    textFrame:SetAllPoints(bar)
+    textFrame:SetFrameLevel(bar:GetFrameLevel() + 2)
+    local text = textFrame:CreateFontString(nil, "OVERLAY")
+    text:SetFont(GetRBFont(), 11, "")
+    text:SetShadowOffset(1, -1)
+    text:SetShadowColor(0, 0, 0, 1)
     text:SetTextColor(1, 1, 1, 0.9)
-    text:SetPoint("CENTER")
+    text:SetPoint("CENTER", textFrame, "CENTER")
     bar._text = text
 
     -- Smooth animation state
@@ -703,6 +708,7 @@ local function RegisterUnlockElements()
             if healthBar then
                 healthBar:ClearAllPoints()
                 healthBar:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+                healthBar:SetScale(hp.scale or 1)
             end
         end,
     }
@@ -753,6 +759,7 @@ local function RegisterUnlockElements()
             if primaryBar then
                 primaryBar:ClearAllPoints()
                 primaryBar:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+                primaryBar:SetScale(pp.scale or 1)
             end
         end,
     }
@@ -810,6 +817,7 @@ local function RegisterUnlockElements()
             if secondaryFrame then
                 secondaryFrame:ClearAllPoints()
                 secondaryFrame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+                secondaryFrame:SetScale(sp.scale or 1)
             end
         end,
     }
@@ -856,6 +864,7 @@ local function RegisterUnlockElements()
             if castBarFrame then
                 castBarFrame:ClearAllPoints()
                 castBarFrame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+                castBarFrame:SetScale(cb.scale or 1)
             end
         end,
     }
@@ -1018,6 +1027,16 @@ local function BuildBars()
 
     if not mainFrame then BuildMainFrame() end
 
+    -- Clear animation state so DB values are always authoritative on a fresh build
+    local _animClearKeys = { "scale", "ox", "oy", "w", "h" }
+    for _, _animBar in ipairs({ healthBar, primaryBar, secondaryFrame, castBarFrame }) do
+        if _animBar then
+            for _, _k in ipairs(_animClearKeys) do
+                _animBar["_barAnim_" .. _k] = nil
+            end
+        end
+    end
+
     -- Health bar
     local hp = p.health
     if hp.enabled then
@@ -1086,7 +1105,7 @@ local function BuildBars()
         -- Text positioning
         healthBar._text:ClearAllPoints()
         healthBar._text:SetPoint("CENTER", healthBar, "CENTER", hp.textXOffset, hp.textYOffset)
-        healthBar._text:SetFont(GetRBFont(), hp.textSize, "OUTLINE")
+        healthBar._text:SetFont(GetRBFont(), hp.textSize, "")
 
         healthBar:Show()
         healthBar:SetAlpha(hp.barAlpha or 1)
@@ -1162,7 +1181,7 @@ local function BuildBars()
         -- Text positioning
         primaryBar._text:ClearAllPoints()
         primaryBar._text:SetPoint("CENTER", primaryBar, "CENTER", pp.textXOffset, pp.textYOffset)
-        primaryBar._text:SetFont(GetRBFont(), pp.textSize, "OUTLINE")
+        primaryBar._text:SetFont(GetRBFont(), pp.textSize, "")
 
         primaryBar:Show()
         primaryBar:SetAlpha(pp.barAlpha or 1)
@@ -1261,27 +1280,31 @@ local function BuildBars()
             secondaryBar:SetMinMaxValues(0, maxPts)
             secondaryBar:SetValue(0)
 
+            -- Bar texture and orientation must be applied before colors since
+            -- SetStatusBarTexture and SetRotatesTexture both reset vertex color
+            ApplyBarTexture(secondaryBar, g.barTexture or "none")
+            ApplyBarOrientation(secondaryBar, p.general.orientation)
+
             -- Colors
             local pc = POWER_COLORS[cachedSecondary.power]
             if sp.darkTheme then
                 secondaryBar:GetStatusBarTexture():SetVertexColor(DARK_FILL_R, DARK_FILL_G, DARK_FILL_B, DARK_FILL_A)
                 secondaryBar._bg:SetColorTexture(DARK_BG_R, DARK_BG_G, DARK_BG_B, DARK_BG_A)
-            elseif sp.classColored then
+            elseif sp.classColored ~= false then
+                -- classColored is true (default) — use class color, or power color if no class color
                 local cc = CLASS_COLORS[cachedClass]
                 if cc then
                     secondaryBar:GetStatusBarTexture():SetVertexColor(cc[1], cc[2], cc[3], sp.fillA or 1)
-                    secondaryBar._bg:SetColorTexture(sp.bgR, sp.bgG, sp.bgB, sp.bgA)
+                elseif pc then
+                    secondaryBar:GetStatusBarTexture():SetVertexColor(pc[1], pc[2], pc[3], sp.fillA or 1)
                 end
-            elseif pc then
-                secondaryBar:GetStatusBarTexture():SetVertexColor(pc[1], pc[2], pc[3], sp.fillA or 1)
                 secondaryBar._bg:SetColorTexture(sp.bgR, sp.bgG, sp.bgB, sp.bgA)
             else
+                -- classColored explicitly false — use custom fill color
                 secondaryBar:GetStatusBarTexture():SetVertexColor(sp.fillR, sp.fillG, sp.fillB, sp.fillA)
                 secondaryBar._bg:SetColorTexture(sp.bgR, sp.bgG, sp.bgB, sp.bgA)
             end
             secondaryBar:ApplyBorder(0, 0, 0, 0, 0)
-            ApplyBarTexture(secondaryBar, g.barTexture or "none")
-            ApplyBarOrientation(secondaryBar, p.general.orientation)
             secondaryBar:Show()
         elseif cachedSecondary.type == "runes" then
             for i = 1, 6 do
@@ -1543,11 +1566,13 @@ local function UpdateSecondaryResource()
     -- Color: dark theme > class colored > custom fill color
     if sp.darkTheme then
         r, g, b = DARK_FILL_R, DARK_FILL_G, DARK_FILL_B
-    elseif sp.classColored then
+    elseif sp.classColored ~= false then
+        -- classColored is true (default) — use class color
         local cc = CLASS_COLORS[cachedClass]
         if cc then r, g, b = cc[1], cc[2], cc[3] end
         a = sp.fillA or 1
     else
+        -- classColored explicitly false — custom fill
         r, g, b, a = sp.fillR, sp.fillG, sp.fillB, sp.fillA or 1
     end
 
@@ -1606,6 +1631,13 @@ local function UpdateSecondaryResource()
                 if not maxTainted and maxC <= 0 then maxC = 1 end
             end
             secondaryBar:SetMinMaxValues(0, maxC)
+            -- Apply fill color (dark theme / class colored / custom).
+            -- Brewmaster stagger uses threshold colors when neither override
+            -- is active; all other cases use r,g,b,a from above.
+            if powerType ~= "BREWMASTER_STAGGER" or sp.darkTheme or sp.classColored then
+                local ft = secondaryBar:GetStatusBarTexture()
+                if ft then ft:SetVertexColor(r, g, b, a) end
+            end
             -- Secret-aware update: pass secret values directly to the
             -- StatusBar (the C widget handles them natively).  Only use
             -- smooth animation for clean numeric values.
@@ -2125,14 +2157,18 @@ BuildCastBar = function()
 
         -- Spell name text
         local nameText = bar:CreateFontString(nil, "OVERLAY")
-        nameText:SetFont(GetRBFont(), 11, "OUTLINE")
+        nameText:SetFont(GetRBFont(), 11, "")
+        nameText:SetShadowOffset(1, -1)
+        nameText:SetShadowColor(0, 0, 0, 1)
         nameText:SetPoint("LEFT", bar, "LEFT", 4, 0)
         nameText:SetJustifyH("LEFT")
         castBarFrame._nameText = nameText
 
         -- Timer text
         local timerText = bar:CreateFontString(nil, "OVERLAY")
-        timerText:SetFont(GetRBFont(), 11, "OUTLINE")
+        timerText:SetFont(GetRBFont(), 11, "")
+        timerText:SetShadowOffset(1, -1)
+        timerText:SetShadowColor(0, 0, 0, 1)
         timerText:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
         timerText:SetJustifyH("RIGHT")
         castBarFrame._timerText = timerText
@@ -2296,7 +2332,7 @@ BuildCastBar = function()
     -- Timer text
     local timerText = castBarFrame._timerText
     if cb.showTimer then
-        timerText:SetFont(GetRBFont(), cb.timerSize or 11, "OUTLINE")
+        timerText:SetFont(GetRBFont(), cb.timerSize or 11, "")
         timerText:ClearAllPoints()
         timerText:SetPoint("RIGHT", bar, "RIGHT", -4 + (cb.timerX or 0), cb.timerY or 0)
         timerText:Show()

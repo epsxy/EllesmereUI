@@ -1,4 +1,4 @@
--------------------------------------------------------------------------------
+﻿-------------------------------------------------------------------------------
 --  EUI_ActionBar_Options.lua
 --  Registers the real Action Bars module with EllesmereUI
 --  Pure UI makeover ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ all get/set calls go to EAB.db.profile, same as before
@@ -533,36 +533,32 @@ initFrame:SetScript("OnEvent", function(self)
                 numVisible = ovIcons
             end
 
-            -- Preview always shows a single row ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â only display row 1 icons
+
+            -- Multi-row layout: show all rows matching the real bar
             local numRows = settings.numRows or 1
             local ovRows = settings.overrideNumRows
             if ovRows and ovRows > 0 then numRows = ovRows end
             local stride = math.ceil(numVisible / numRows)
-            -- Only show first row worth of icons
-            local previewCount = stride
-
+            local previewCount = numVisible
             -- Read showEmpty early so the leftmost/rightmost block can reference it
             local showEmpty = settings.alwaysShowButtons
             if showEmpty == nil then showEmpty = true end
 
             -- When alwaysShowButtons is off, size preview to rightmost action slot
             -- and track leftmost for proper centering
+            -- For multi-row, leftmost is always 1 (row/col math requires contiguous range).
+            -- When alwaysShowButtons is off, trim trailing empty slots from the last row.
             local leftmost = 1
             if not showEmpty then
-                local first, last = 0, 0
+                local last = 0
                 for i = 1, previewCount do
                     local realBtn = _G[info.buttonPrefix .. i]
                     if realBtn and ns.ButtonHasAction(realBtn, info.buttonPrefix) then
-                        if first == 0 then first = i end
                         last = i
                     end
                 end
-                if last > 0 then
-                    leftmost = first
-                    previewCount = last
-                end
+                if last > 0 then previewCount = last end
             end
-
             -- Read settings
             local spacing   = settings.buttonPadding or 2
             -- Resolve border thickness from dropdown
@@ -628,43 +624,55 @@ initFrame:SetScript("OnEvent", function(self)
             local scaledKBSize = math.max(6, floor(kbSize * totalScale + 0.5))
             local scaledCTSize = math.max(6, floor(ctSize * totalScale + 0.5))
 
-            -- Single row layout (only the span from leftmost to previewCount)
-            local spanCount = previewCount - leftmost + 1
-            local gridW = spanCount * scaledBtnW + (spanCount - 1) * scaledPad
-            local gridH = scaledBtnH
+            -- Multi-row grid layout
+            local gridW = stride * scaledBtnW + (stride - 1) * scaledPad
+            local gridH = numRows * scaledBtnH + (numRows - 1) * scaledPad
+            local gridStartX = Snap(math.max(0, (self:GetWidth() - gridW) / 2))
 
-            -- Resize preview frame to fit
+            -- Resize preview frame to fit all rows
             local frameH = Snap(gridH + 20)  -- 10px padding top + bottom
             self:SetHeight(frameH)
 
-            local startX = Snap(math.max(0, (self:GetWidth() - gridW) / 2))
-            local startY = -Snap(10)  -- top padding
+            -- Store grid bounds for background anchoring
+            self._gridStartX = gridStartX
+            self._gridW      = gridW
+            self._gridH      = gridH
 
+            local startY = -Snap(10)  -- top padding
             for i = 1, maxBtns do
                 local entry = buttons[i]
                 local bf    = entry.frame
                 local icon  = entry.icon
 
                 if i >= leftmost and i <= previewCount then
-                    -- Single row: position relative to leftmost
-                    local col = i - leftmost
+                    -- Multi-row: compute row and column for this button
+                    local idx = i - leftmost  -- 0-based index
+                    local row = math.floor(idx / stride)
+                    local col = idx % stride
+                    -- Count buttons in this row (last row may be shorter)
+                    local rowStart = row * stride + 1
+                    local rowEnd = math.min(rowStart + stride - 1, previewCount)
+                    local countInRow = rowEnd - rowStart + 1
+                    -- Center each row within the full grid width
+                    local rowW = countInRow * scaledBtnW + (countInRow - 1) * scaledPad
+                    local startX = Snap(gridStartX + (gridW - rowW) / 2)
                     local xOff = Snap(startX + col * (scaledBtnW + scaledPad))
-
+                    local yOff = startY - Snap(row * (scaledBtnH + scaledPad))
                     -- Set animation targets
                     entry.targetX = xOff
-                    entry.targetY = startY
+                    entry.targetY = yOff
                     entry.targetW = scaledBtnW
                     entry.targetH = scaledBtnH
 
                     if not entry.currentX then
                         -- First run or bar switch: snap immediately
                         entry.currentX = xOff
-                        entry.currentY = startY
+                        entry.currentY = yOff
                         entry.currentW = scaledBtnW
                         entry.currentH = scaledBtnH
                         bf:SetSize(scaledBtnW, scaledBtnH)
                         bf:ClearAllPoints()
-                        bf:SetPoint("TOPLEFT", self, "TOPLEFT", xOff, startY)
+                        bf:SetPoint("TOPLEFT", self, "TOPLEFT", xOff, yOff)
                     else
                         -- Animate to new targets
                         self:SetScript("OnUpdate", animOnUpdate)
@@ -878,23 +886,16 @@ initFrame:SetScript("OnEvent", function(self)
                 previewBG:SetColorTexture(bgC.r, bgC.g, bgC.b, bgC.a)
                 local extraX = Snap((settings.bgPadX or 0) * totalScale)
                 local extraY = Snap((settings.bgPadY or 0) * totalScale)
-                -- Anchor to actual first/last visible button frames for pixel-perfect alignment
-                local firstBF, lastBF
-                for i = leftmost, previewCount do
-                    local bf = buttons[i].frame
-                    if bf:IsShown() then
-                        if not firstBF then firstBF = bf end
-                        lastBF = bf
-                    end
-                end
-                if firstBF and lastBF then
-                    previewBG:ClearAllPoints()
-                    previewBG:SetPoint("TOPLEFT", firstBF, "TOPLEFT", -extraX, extraY)
-                    previewBG:SetPoint("BOTTOMRIGHT", lastBF, "BOTTOMRIGHT", extraX, -extraY)
-                    previewBG:Show()
-                else
-                    previewBG:Hide()
-                end
+                -- Anchor to the full grid bounds (not individual buttons) so multi-row
+                -- backgrounds cover the entire grid even when the last row is shorter.
+                local gx = self._gridStartX or 0
+                local gw = self._gridW or 0
+                local gh = self._gridH or 0
+                local gy = -Snap(10)  -- top padding (matches startY)
+                previewBG:ClearAllPoints()
+                previewBG:SetPoint("TOPLEFT",     self, "TOPLEFT", gx - extraX,       gy + extraY)
+                previewBG:SetPoint("BOTTOMRIGHT", self, "TOPLEFT", gx + gw + extraX,  gy - gh - extraY)
+                previewBG:Show()
             else
                 previewBG:Hide()
             end

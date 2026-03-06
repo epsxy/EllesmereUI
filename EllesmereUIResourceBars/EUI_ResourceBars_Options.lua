@@ -1,4 +1,4 @@
--------------------------------------------------------------------------------
+﻿-------------------------------------------------------------------------------
 --  EUI_ResourceBars_Options.lua
 --  Registers the Resource Bars module with EllesmereUI
 --  Pages: Class, Power and Health Bars | Cast Bar | Unlock Mode
@@ -235,33 +235,33 @@ initFrame:SetScript("OnEvent", function(self)
             local pr, pg, pb
             if sp.darkTheme then
                 pr, pg, pb = DARK_FILL_R, DARK_FILL_G, DARK_FILL_B
-            elseif sp.classColored then
+            elseif sp.classColored ~= false then
                 pr, pg, pb = cc and cc[1] or 0.95, cc and cc[2] or 0.90, cc and cc[3] or 0.60
             else
-                -- For bar-type, fall through to power color if not custom
-                local pColors = _G._ERB_PowerColors
-                local gsr = _G._ERB_GetSecondaryResource
-                local sec = gsr and gsr()
-                local pcol = sec and pColors and pColors[sec.power]
-                if isBar and pcol and not sp.classColored then
-                    pr, pg, pb = pcol[1], pcol[2], pcol[3]
-                else
-                    pr, pg, pb = sp.fillR, sp.fillG, sp.fillB
-                end
+                -- classColored explicitly false -- use custom fill color
+                pr, pg, pb = sp.fillR, sp.fillG, sp.fillB
             end
 
+
+
+
+
+
+
+
+
             -- Static center -- no y-offset interaction with preview
+
             local pScale = sp.scale or 1.0
-            local pOX = (sp.offsetX or 0)
             local function ApplyPipTransform()
                 local s = pc["_anim_scale"] or pScale
-                local ox = pc["_anim_ox"] or pOX
                 pc:SetScale(s)
                 pc:ClearAllPoints()
-                pc:SetPoint("TOP", container, "TOP", ox, 0)
+                pc:SetPoint("CENTER", container, "CENTER", 0, 0)
             end
             SmoothAnimate(pc, "scale", pScale, function() ApplyPipTransform() end)
-            SmoothAnimate(pc, "ox", pOX, function() ApplyPipTransform() end)
+
+
 
             if isBar then
                 -- Bar-type preview update
@@ -460,20 +460,20 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
-        -- Recalculate total preview height
+        -- Preview height: hardcoded 80px
         do
-            local pipScale = sp.scale or 1.0
-            local scaledH = sp.enabled and (sp.pipHeight * pipScale) or 0
-            local rawH = scaledH
-            local totalH = 15 + rawH * _previewScale + 15
-            _headerBaseH = totalH
-            if container then container:SetHeight(rawH) end
+            local TOTAL_H = 80
+            _headerBaseH = TOTAL_H
+            if container then container:SetHeight(80) end
             if not _previewBuilding then
                 local hintH = (_previewHintFS and _previewHintFS:IsShown()) and 35 or 0
-                EllesmereUI:UpdateContentHeaderHeight(totalH + hintH)
+                EllesmereUI:UpdateContentHeaderHeight(TOTAL_H + hintH)
             end
         end
     end
+
+
+
 
     ---------------------------------------------------------------------------
     --  Forward declarations for preview click-to-scroll
@@ -497,7 +497,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         local container = CreateFrame("Frame", nil, hdr)
         container:SetSize(hdrW, 100)
-        container:SetPoint("TOP", hdr, "TOP", 0, -15)
+        container:SetPoint("CENTER", hdr, "CENTER", 0, 0)
 
         -- Scale the preview so pixel sizes match real bars on screen.
         -- Same technique as nameplates display preview: compensate for the
@@ -525,7 +525,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- Bar-type preview (Devourer, Elemental Shaman)
             local totalW = p.primary.width or 214
             pipC:SetSize(totalW, pipH)
-            pipC:SetPoint("TOP", container, "TOP", 0, 0)
+            pipC:SetPoint("CENTER", container, "CENTER", 0, 0)
 
             -- Background
             local bg = pipC:CreateTexture(nil, "BACKGROUND")
@@ -563,7 +563,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
             local snappedEnd = GamePP.Scale(numPips * stride - pipSp)
             pipC:SetSize(snappedEnd, pipH)
-            pipC:SetPoint("TOP", container, "TOP", 0, 0)
+            pipC:SetPoint("CENTER", container, "CENTER", 0, 0)
 
             for i = 1, numPips do
                 local pip = CreateFrame("Frame", nil, pipC)
@@ -639,11 +639,8 @@ initFrame:SetScript("OnEvent", function(self)
         end
         local hintShown = not IsPreviewHintDismissed()
 
-        -- Height: class resource pips only (15px padding above and below, unscaled)
-        local pipScale = sp.scale or 1.0
-        local scaledH = sp.enabled and (sp.pipHeight * pipScale) or 0
-        local rawH = scaledH
-        local TOTAL_H = 15 + rawH * previewScale + 15
+        -- Height: hardcoded 80px preview area
+        local TOTAL_H = 80
         _headerBaseH = TOTAL_H
         if hintShown then
             if not _previewHintFS then
@@ -665,7 +662,7 @@ initFrame:SetScript("OnEvent", function(self)
             _previewHintFS:Hide()
         end
 
-        container:SetHeight(rawH)
+        container:SetHeight(80)
         _previewBuilding = false
         return TOTAL_H
     end
@@ -1218,7 +1215,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if p and not p.secondary.enabled then
                     EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Enable Class Resource"))
                 else
-                    EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Class Colored Fill"))
+                    EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("This option requires Class Colored Fill to be disabled"))
                 end
             end)
             swDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
@@ -1677,10 +1674,10 @@ initFrame:SetScript("OnEvent", function(self)
             { type = "toggle", text = "Power Colored Fill",
               disabled = powerOff,
               disabledTooltip = "Enable Power Bar",
-              getValue = function() local p = DB(); return p and p.primary.customColored end,
+              getValue = function() local p = DB(); return p and not p.primary.customColored end,
               setValue = function(v)
                   local p = DB(); if not p then return end
-                  p.primary.customColored = v; RebuildPower()
+                  p.primary.customColored = not v; RebuildPower()
                   EllesmereUI:RefreshPage()
               end },
             { type = "dropdown", text = "Power Text",
@@ -2349,7 +2346,7 @@ initFrame:SetScript("OnEvent", function(self)
         local iconW = 0
         if cb.showIcon then iconW = (cb.iconAttach and h) or (cb.iconSize or h) end
         pf.container:SetSize(w + iconW + 4, math.max(h, cb.showIcon and ((cb.iconAttach and h) or (cb.iconSize or h)) or h))
-
+        pf.container:ClearAllPoints(); pf.container:SetPoint("CENTER", pf.container:GetParent(), "CENTER", 0, 0)
         -- Bar frame
         pf.barFrame:SetSize(w, h)
         pf.barFrame:ClearAllPoints()
@@ -2442,7 +2439,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Timer text
         if cb.showTimer then
-            pf.timerText:SetFont(FONT_PATH, cb.timerSize or 11, "OUTLINE")
+            pf.timerText:SetFont(FONT_PATH, cb.timerSize or 11, "")
             pf.timerText:ClearAllPoints()
             pf.timerText:SetPoint("RIGHT", pf.bar, "RIGHT", -4 + (cb.timerX or 0), cb.timerY or 0)
             local remaining = 3.0 * (1 - _castBarPreviewFill)
@@ -2452,11 +2449,8 @@ initFrame:SetScript("OnEvent", function(self)
             pf.timerText:Hide()
         end
 
-        -- Update header height
-        local totalH = math.max(h, cb.showIcon and ((cb.iconAttach and h) or (cb.iconSize or h)) or h)
-        local rawH = 30 + totalH + 30
-        local scaledH = rawH * _castBarPreviewScale
-        EllesmereUI:UpdateContentHeaderHeight(scaledH)
+        -- Update header height: hardcoded 80px preview area
+        EllesmereUI:UpdateContentHeaderHeight(80)
     end
 
     local _castBarPreviewBuilder = function(hdr, hdrW)
@@ -2573,7 +2567,9 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Timer text
         local timerText = bar:CreateFontString(nil, "OVERLAY")
-        timerText:SetFont(FONT_PATH, cb.timerSize or 11, "OUTLINE")
+        timerText:SetFont(FONT_PATH, cb.timerSize or 11, "")
+        timerText:SetShadowOffset(1, -1)
+        timerText:SetShadowColor(0, 0, 0, 1)
         timerText:SetPoint("RIGHT", bar, "RIGHT", -4 + (cb.timerX or 0), cb.timerY or 0)
         timerText:SetJustifyH("RIGHT")
         if cb.showTimer then
@@ -2584,9 +2580,8 @@ initFrame:SetScript("OnEvent", function(self)
         end
         _castBarPreviewFrames.timerText = timerText
 
-        -- Return height
-        local totalH = math.max(h, cb.showIcon and iSize or h)
-        return 30 + totalH + 30
+        -- Return height: hardcoded 80px preview area
+        return 80
     end
 
     ---------------------------------------------------------------------------
