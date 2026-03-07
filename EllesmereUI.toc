@@ -9,7 +9,9 @@
 ## X-Wago-ID: ZKbxbRN1
 
 # Libraries
-Libs\LibDeflate.lua
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDeflate\LibDeflate.lua
 
 # Lightweight addon framework (replaces Ace3)
 EllesmereUI_Lite.lua
