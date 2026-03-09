@@ -231,6 +231,8 @@ local function ApplyCDMStyleOnly(profile, snap)
     for k, v in pairs(snap) do
         if k == "specProfiles" then
             -- Never overwrite specProfiles from a style snapshot
+        elseif k == "_capturedOnce" then
+            -- Never overwrite — once captured, always captured
         elseif k == "cdmBarPositions" or k == "tbbPositions" then
             -- Never overwrite position data from a style snapshot
         elseif k == "cdmBars" and type(v) == "table" then

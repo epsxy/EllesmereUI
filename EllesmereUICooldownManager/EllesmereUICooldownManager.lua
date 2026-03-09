@@ -718,7 +718,10 @@ local DEFAULTS = {
         multiChargeSpells = {},
     },
     profile = {
-        _capturedOnce = false,
+        -- _capturedOnce intentionally omitted from defaults so StripDefaults
+        -- never removes it on logout. It is set to true after first capture
+        -- and must survive profile switches and reloads.
+        -- _capturedOnce = nil,
         -- CDM Look
         reskinBorders   = true,
         utilityScale    = 1.0,
@@ -5872,26 +5875,50 @@ local function ReconcileMainBarSpells()
                     for i, sid in ipairs(existing) do
                         if sid and sid ~= 0 and not removed[sid] then
                             if allViewerSpells[sid] then
-                                -- Spell exists in some viewer or is known — keep it
+                                -- Spell exists in some viewer or is known — keep it in place
                                 kept[#kept + 1] = sid
                                 keptSet[sid] = true
                             elseif isTalentAware then
-                                -- Spell not known at all — move to dormant
+                                -- Talent-aware bar: spell not known at all — move to dormant
                                 if not barData.dormantSpells then barData.dormantSpells = {} end
                                 barData.dormantSpells[sid] = i
+                            else
+                                -- Non-talent-aware bar: viewer may not be fully populated yet.
+                                -- Keep the spell in its current position rather than dropping it,
+                                -- so a partially-populated viewer can't scramble the saved order.
+                                kept[#kept + 1] = sid
+                                keptSet[sid] = true
                             end
                         end
                     end
-                    -- Append new spells from this bar's own viewer only
-                    -- (cross-category spells are added explicitly by the user)
-                    -- Skip spells that are dormant (they'll return via
-                    -- TalentAwareReconcile at their saved position)
+                    -- Append genuinely new spells from this bar's viewer only.
+                    -- Build a stable ordered list from the viewer so new spells
+                    -- are appended in a consistent order rather than pairs() order.
+                    local newSpells = {}
                     local dormant = barData.dormantSpells
-                    for sid in pairs(barPool) do
-                        if not keptSet[sid] and not removed[sid]
-                           and not (dormant and dormant[sid]) then
-                            kept[#kept + 1] = sid
+                    local vf = _G[viewerName]
+                    if vf then
+                        for ci = 1, vf:GetNumChildren() do
+                            local ch = select(ci, vf:GetChildren())
+                            if ch then
+                                local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+                                if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+                                    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                                    if info then
+                                        local sid = info.spellID
+                                        if sid and sid > 0
+                                           and not keptSet[sid] and not removed[sid]
+                                           and not (dormant and dormant[sid]) then
+                                            newSpells[#newSpells + 1] = sid
+                                            keptSet[sid] = true  -- deduplicate
+                                        end
+                                    end
+                                end
+                            end
                         end
+                    end
+                    for _, sid in ipairs(newSpells) do
+                        kept[#kept + 1] = sid
                     end
                     barData.trackedSpells = kept
                 end

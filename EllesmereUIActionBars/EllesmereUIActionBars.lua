@@ -2210,16 +2210,35 @@ local function LayoutBar(key)
     local frameH = totalRows * btnH + (totalRows - 1) * padding
     frame:SetSize(max(frameW, 1), max(frameH, 1))
 
-    -- Set flyoutDirection on every button based on bar orientation and screen position.
-    -- Vertical bars: expand left if bar is on the right half, else right.
-    -- Horizontal bars: expand down if bar is on the top half, else up.
+    -- Set flyoutDirection on every button based on bar orientation and actual
+    -- screen position. Divide the screen into thirds on each axis and pick the
+    -- direction that opens away from the nearest screen edge.
     local flyDir
-    local pos = EAB.db.profile.barPositions[key]
-    local relPoint = pos and pos.relPoint or "CENTER"
-    if isVertical then
-        flyDir = relPoint:match("RIGHT") and "LEFT" or "RIGHT"
-    else
-        flyDir = relPoint:match("TOP") and "DOWN" or "UP"
+    do
+        local cx, cy = frame:GetCenter()
+        local uiW = UIParent:GetWidth()
+        local uiH = UIParent:GetHeight()
+        local uiScale = UIParent:GetEffectiveScale()
+        local fScale  = frame:GetEffectiveScale()
+        -- Convert to UIParent coordinate space
+        if cx and cy then
+            cx = cx * fScale / uiScale
+            cy = cy * fScale / uiScale
+        end
+        if cx and cy then
+            local thirdW = uiW / 3
+            local thirdH = uiH / 3
+            if isVertical then
+                -- Vertical bar: flyout goes left if bar is in the right third, else right
+                flyDir = (cx > thirdW * 2) and "LEFT" or "RIGHT"
+            else
+                -- Horizontal bar: flyout goes down if bar is in the top third, else up
+                flyDir = (cy > thirdH * 2) and "DOWN" or "UP"
+            end
+        else
+            -- Frame not yet on screen — safe fallback
+            flyDir = isVertical and "RIGHT" or "UP"
+        end
     end
     for i = 1, #buttons do
         local btn = buttons[i]
