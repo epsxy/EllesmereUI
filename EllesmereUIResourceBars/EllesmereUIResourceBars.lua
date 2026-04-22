@@ -361,15 +361,23 @@ end
 local _barColorCurve = nil
 local _barColorCurveHash = nil
 
-local function GetBarThresholdCurve(baseR, baseG, baseB, threshR, threshG, threshB, threshPct)
+local function GetBarThresholdCurve(baseR, baseG, baseB, threshR, threshG, threshB, threshValue, maxValue, isAbsoluteValue)
     if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
 
-    local hash = format("%.3f,%.3f,%.3f|%.3f,%.3f,%.3f|%.1f",
-        baseR, baseG, baseB, threshR, threshG, threshB, threshPct)
+    -- Calculate threshold position (0-1) based on mode
+    local threshNormalized
+    if isAbsoluteValue and maxValue and maxValue > 0 then
+        threshNormalized = threshValue / maxValue
+    else
+        threshNormalized = threshValue / 100
+    end
+    
+    local hash = format("%.3f,%.3f,%.3f|%.3f,%.3f,%.3f|%.1f|%s",
+        baseR, baseG, baseB, threshR, threshG, threshB, threshNormalized, tostring(isAbsoluteValue))
     if _barColorCurveHash == hash then return _barColorCurve end
 
     local curve = C_CurveUtil.CreateColorCurve()
-    local t = math.max(0, math.min(1, threshPct / 100))
+    local t = math.max(0, math.min(1, threshNormalized))
     local EPSILON = 0.0001
 
     -- At or below threshold -> use threshold color
@@ -424,7 +432,9 @@ local DEFAULTS = {
             visHideNoEnemy = false,
             orientation = "HORIZONTAL",  -- "HORIZONTAL","VERTICAL_UP","VERTICAL_DOWN"
             thresholdEnabled = false,
+            thresholdMode   = "percent",  -- "percent" or "value"
             thresholdPct     = 30,
+            thresholdValue   = 10000,
             thresholdR = 1.0, thresholdG = 0.2, thresholdB = 0.2, thresholdA = 1,
         },
         primary = {
@@ -453,7 +463,9 @@ local DEFAULTS = {
             visHideNoEnemy = false,
             orientation = "HORIZONTAL",  -- "HORIZONTAL","VERTICAL_UP","VERTICAL_DOWN"
             thresholdEnabled = false,
+            thresholdMode   = "percent",  -- "percent" or "value"
             thresholdPct     = 30,
+            thresholdValue   = 25,
             thresholdPartialOnly = false,
             thresholdR = 1.0, thresholdG = 0.2, thresholdB = 0.2, thresholdA = 1,
             expandIfNoResource = false,
@@ -477,7 +489,9 @@ local DEFAULTS = {
             barBgR      = 0, barBgG = 0, barBgB = 0, barBgA = 0.5,
             barAlpha    = 1.0,
             thresholdEnabled = false,
+            thresholdMode   = "percent",  -- "percent" or "value"
             thresholdCount   = 3,
+            thresholdValue   = 5,
             thresholdPartialOnly = false,
             thresholdR = 0x0c/255, thresholdG = 0xd2/255, thresholdB = 0x9d/255, thresholdA = 1,
             tickValues  = "",   -- comma-separated absolute resource values for tick marks (bar-type only)
@@ -2106,7 +2120,9 @@ local function UpdateHealthBar()
             if cc then baseR, baseG, baseB = cc[1], cc[2], cc[3] else baseR, baseG, baseB = 0.15, 0.75, 0.30 end
         end
         local tR, tG, tB = hp.thresholdR or 1, hp.thresholdG or 0.2, hp.thresholdB or 0.2
-        local curve = GetBarThresholdCurve(baseR, baseG, baseB, tR, tG, tB, hp.thresholdPct or 30)
+        local threshValue = hp.thresholdMode == "value" and (hp.thresholdValue or 10000) or (hp.thresholdPct or 30)
+        local maxHealth = UnitHealthMax("player") or 1
+        local curve = GetBarThresholdCurve(baseR, baseG, baseB, tR, tG, tB, threshValue, maxHealth, hp.thresholdMode == "value")
         if curve then
             local ok, colorResult = pcall(UnitHealthPercent, "player", false, curve)
             if ok and colorResult and colorResult.GetRGBA then
@@ -2185,15 +2201,16 @@ local function UpdatePrimaryBar()
         -- thresholdPartialOnly: color at/above threshold (high resource).
         -- Default (false): color at/below threshold (low resource warning).
         local tR, tG, tB = pp.thresholdR or 1, pp.thresholdG or 0.2, pp.thresholdB or 0.2
-        local tPct = pp.thresholdPct or 30
+        local threshValue = pp.thresholdMode == "value" and (pp.thresholdValue or 25) or (pp.thresholdPct or 30)
+        local mx = UnitPowerMax("player", cachedPrimary) or 1
         local curve
         if pp.thresholdPartialOnly then
             -- Swap base and threshold colors: threshold color appears at/above pct,
             -- base color appears below. Achieved by passing thresh as "base" arg
             -- (which the curve puts above the step) and base as "thresh" arg (below).
-            curve = GetBarThresholdCurve(tR, tG, tB, baseR, baseG, baseB, tPct)
+            curve = GetBarThresholdCurve(tR, tG, tB, baseR, baseG, baseB, threshValue, mx, pp.thresholdMode == "value")
         else
-            curve = GetBarThresholdCurve(baseR, baseG, baseB, tR, tG, tB, tPct)
+            curve = GetBarThresholdCurve(baseR, baseG, baseB, tR, tG, tB, threshValue, mx, pp.thresholdMode == "value")
         end
         if curve then
             local ok, colorResult = pcall(UnitPowerPercent, "player", cachedPrimary, false, curve)
@@ -2476,10 +2493,12 @@ local function UpdateSecondaryResource()
                     if sp.thresholdEnabled and pType and UnitPowerPercent then
                         -- Use ColorCurve + UnitPowerPercent: WoW evaluates the secret
                         -- value against the curve on the C side, returns a Color object.
+                        local threshValue = sp.thresholdMode == "value" and (sp.thresholdValue or 5) or (sp.thresholdCount or 30)
+                        local resourceMax = UnitPowerMax("player", pType) or 1
                         local curve = GetBarThresholdCurve(
                             r, g, b,
                             sp.thresholdR or 1, sp.thresholdG or 0.2, sp.thresholdB or 0.2,
-                            sp.thresholdCount or 30)
+                            threshValue, resourceMax, sp.thresholdMode == "value")
                         if curve then
                             local ok, colorResult = pcall(UnitPowerPercent, "player", pType, false, curve)
                             if ok and colorResult and colorResult.GetRGBA then
@@ -2491,7 +2510,7 @@ local function UpdateSecondaryResource()
                             ft:SetVertexColor(r, g, b, a)
                         end
                     elseif sp.thresholdEnabled and powerType == "SOUL_FRAGMENTS_DEVOURER" then
-                        local threshVal = sp.thresholdCount or 30
+                        local threshVal = sp.thresholdMode == "value" and (sp.thresholdValue or 5) or (sp.thresholdCount or 30)
                         if cur >= threshVal then
                             ft:SetVertexColor(sp.thresholdR or 1, sp.thresholdG or 0.2, sp.thresholdB or 0.2, sp.thresholdA or 1)
                         else
