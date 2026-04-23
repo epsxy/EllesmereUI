@@ -1501,13 +1501,40 @@ initFrame:SetScript("OnEvent", function(self)
                   EllesmereUI:RefreshPage()
               end },
             { type = "slider", text = "Threshold",
-              min = 1, max = IsBarTypeSecondary() and 100 or 10, step = 1,
+              min = 1, max = function()
+                  local p = DB()
+                  if not p then return 100 end
+                  local mode = p.secondary.thresholdMode or "percent"
+                  if mode == "value" then
+                      -- For value mode, use a reasonable max (adjust based on typical resource max)
+                      return 1000
+                  else
+                      -- For percent mode
+                      return IsBarTypeSecondary() and 100 or 10
+                  end
+              end,
+              step = 1,
               disabled = function() local p = DB(); return p and (not p.secondary.enabled or not p.secondary.thresholdEnabled) end,
               disabledTooltip = function() local p = DB(); if p and not p.secondary.enabled then return "Enable Class Resource" end; return "This option requires Threshold Color to be enabled" end,
-              getValue = function() local p = DB(); return p and p.secondary.thresholdCount or 3 end,
+              getValue = function() 
+                  local p = DB()
+                  if not p then return 3 end
+                  local mode = p.secondary.thresholdMode or "percent"
+                  if mode == "value" then
+                      return p.secondary.thresholdValue or 5
+                  else
+                      return p.secondary.thresholdCount or 3
+                  end
+              end,
               setValue = function(v)
                   local p = DB(); if not p then return end
-                  p.secondary.thresholdCount = v; RefreshClass()
+                  local mode = p.secondary.thresholdMode or "percent"
+                  if mode == "value" then
+                      p.secondary.thresholdValue = v
+                  else
+                      p.secondary.thresholdCount = v
+                  end
+                  RefreshClass()
               end }
         );  y = y - h
         -- Inline swatch on Threshold Color
@@ -1557,6 +1584,14 @@ initFrame:SetScript("OnEvent", function(self)
             local _, cogShowPips = EllesmereUI.BuildCogPopup({
                 title = "Threshold Coloring",
                 rows = {
+                    { type = "toggle", label = "Threshold Mode: Value-Based",
+                      get = function() local p = DB(); return p and p.secondary.thresholdMode == "value" end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.secondary.thresholdMode = v and "value" or "percent"
+                          RefreshClass()
+                          EllesmereUI:RefreshPage()
+                      end },
                     { type = "toggle", label = "Only Color At/Above Threshold",
                       get = function() local p = DB(); return p and p.secondary.thresholdPartialOnly end,
                       set = function(v)
@@ -1996,8 +2031,20 @@ initFrame:SetScript("OnEvent", function(self)
                   p.primary.thresholdEnabled = v; RefreshPower()
                   EllesmereUI:RefreshPage()
               end },
-            { type = "slider", text = "Threshold %",
-              min = 1, max = 99, step = 1,
+            { type = "slider", text = "Threshold",
+              min = 1, max = function()
+                  local p = DB()
+                  if not p then return 99 end
+                  local mode = p.primary.thresholdMode or "percent"
+                  if mode == "value" then
+                      -- For value mode, return a reasonable max based on typical resource max
+                      return 500
+                  else
+                      -- For percent mode
+                      return 99
+                  end
+              end,
+              step = 1,
               disabled = function()
                   local p = DB(); return p and (not p.primary.enabled or not p.primary.thresholdEnabled)
               end,
@@ -2005,10 +2052,25 @@ initFrame:SetScript("OnEvent", function(self)
                   local p = DB(); if p and not p.primary.enabled then return "Enable Power Bar" end
                   return "Enable Threshold Color first"
               end,
-              getValue = function() local p = DB(); return p and p.primary.thresholdPct or 30 end,
+              getValue = function() 
+                  local p = DB()
+                  if not p then return 30 end
+                  local mode = p.primary.thresholdMode or "percent"
+                  if mode == "value" then
+                      return p.primary.thresholdValue or 25
+                  else
+                      return p.primary.thresholdPct or 30
+                  end
+              end,
               setValue = function(v)
                   local p = DB(); if not p then return end
-                  p.primary.thresholdPct = v; RefreshPower()
+                  local mode = p.primary.thresholdMode or "percent"
+                  if mode == "value" then
+                      p.primary.thresholdValue = v
+                  else
+                      p.primary.thresholdPct = v
+                  end
+                  RefreshPower()
               end }
         );  y = y - h
         -- Inline swatch on Threshold Color
@@ -2057,6 +2119,14 @@ initFrame:SetScript("OnEvent", function(self)
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Threshold Coloring",
                 rows = {
+                    { type = "toggle", label = "Threshold Mode: Value-Based",
+                      get = function() local p = DB(); return p and p.primary.thresholdMode == "value" end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.primary.thresholdMode = v and "value" or "percent"
+                          RefreshPower()
+                          EllesmereUI:RefreshPage()
+                      end },
                     { type = "toggle", label = "Reverse Threshold Fill Color",
                       get = function() local p = DB(); return p and p.primary.thresholdPartialOnly end,
                       set = function(v)
@@ -2433,14 +2503,41 @@ initFrame:SetScript("OnEvent", function(self)
                   p.health.thresholdEnabled = v; RefreshHealth()
                   EllesmereUI:RefreshPage()
               end },
-            { type = "slider", text = "Threshold %",
-              min = 1, max = 99, step = 1,
+            { type = "slider", text = "Threshold",
+              min = 1, max = function()
+                  local p = DB()
+                  if not p then return 99 end
+                  local mode = p.health.thresholdMode or "percent"
+                  if mode == "value" then
+                      -- For value mode, return a reasonable max
+                      return 100000
+                  else
+                      -- For percent mode
+                      return 99
+                  end
+              end,
+              step = 1,
               disabled = function() local p = DB(); return p and (not p.health.enabled or not p.health.thresholdEnabled) end,
               disabledTooltip = function() local p = DB(); if p and not p.health.enabled then return "Enable Health Bar" end; return "Enable Threshold Color first" end,
-              getValue = function() local p = DB(); return p and p.health.thresholdPct or 30 end,
+              getValue = function()
+                  local p = DB()
+                  if not p then return 30 end
+                  local mode = p.health.thresholdMode or "percent"
+                  if mode == "value" then
+                      return p.health.thresholdValue or 10000
+                  else
+                      return p.health.thresholdPct or 30
+                  end
+              end,
               setValue = function(v)
                   local p = DB(); if not p then return end
-                  p.health.thresholdPct = v; RefreshHealth()
+                  local mode = p.health.thresholdMode or "percent"
+                  if mode == "value" then
+                      p.health.thresholdValue = v
+                  else
+                      p.health.thresholdPct = v
+                  end
+                  RefreshHealth()
               end }
         );  y = y - h
         -- Inline swatch on Threshold Color
@@ -2482,6 +2579,43 @@ initFrame:SetScript("OnEvent", function(self)
             swatch:HookScript("OnShow", UpdateHealthThreshSwDis)
             EllesmereUI.RegisterWidgetRefresh(UpdateHealthThreshSwDis)
             UpdateHealthThreshSwDis()
+        end
+        -- Inline cog on Threshold for health threshold options
+        do
+            local rgn = healthThreshRow._rightRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Threshold Coloring",
+                rows = {
+                    { type = "toggle", label = "Threshold Mode: Value-Based",
+                      get = function() local p = DB(); return p and p.health.thresholdMode == "value" end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.health.thresholdMode = v and "value" or "percent"
+                          RefreshHealth()
+                          EllesmereUI:RefreshPage()
+                      end },
+                },
+            })
+            local cogBtn = MakeCogBtn(rgn, cogShow)
+            local cogDis = CreateFrame("Frame", nil, rgn)
+            cogDis:SetAllPoints(cogBtn)
+            cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
+            cogDis:EnableMouse(true)
+            cogDis:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Enable Threshold Color first"))
+            end)
+            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateHealthThreshCogDis()
+                local p = DB()
+                if p and (not p.health.enabled or not p.health.thresholdEnabled) then
+                    cogDis:Show(); cogBtn:SetAlpha(0.15)
+                else
+                    cogDis:Hide(); cogBtn:SetAlpha(0.4)
+                end
+            end
+            healthThreshRow._rightRegion:HookScript("OnShow", UpdateHealthThreshCogDis)
+            EllesmereUI.RegisterWidgetRefresh(UpdateHealthThreshCogDis)
+            UpdateHealthThreshCogDis()
         end
 
         -- Row: Anchor to Cursor | Cursor Position (cog: X + Y)
